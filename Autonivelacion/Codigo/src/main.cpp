@@ -3,11 +3,13 @@
 #include <ESP32Servo.h>
 #include <MPU6050.h>
 #include <WiFi.h>
+#include <ArduinoJson.h>  // Para JSON
 
   //Declaraciones para uso de Wifi/Comunicaciones
 
 const char* ssid = "Nombre de red";              //Cambiar al definirlas
 const char* password = "Contraseña de red";      //Cambiar al definirlas
+WiFiServer server(80);
 
   //Declaraciones Giroscopio MPU6050
 
@@ -16,28 +18,50 @@ MPU6050 mpu;
   //Declaraciones Servos
 
 Servo AleronIzquierdo; //Declara el aleron izquierdo como servo
+const int PinAleronIzquierdo = 18; //Cambiar pines a los que toquen
 
-int PinAleronIzquierdo = 0; //Cambiar pines a los que toquen
-
-Servo AleronDerecho; //Declara el aleron derecho como servo
-
-int PinAleronDerecho = 1; //Cambiar pines a los que toquen
+Servo AleronDerecho; //Declara9 el aleron derecho como servo
+const int PinAleronDerecho = 1; //Cambiar pines a los que toquen
 
   //Valores para autonivelador (PID)
 
-float Kp = 1.0, Ki = 0.0, Kd = 0.0;  //Ajustar para modificar la sensibilidad de la nivelacion
+float Kp = 1.0, Ki = 0.0, Kd = 0.0;
+float setpoint = 0.0;
 float error, prevError = 0, integral = 0;
+unsigned long lastTime;
 
-  //Servidor WIFI
+  //Variables para filtro complementario
 
-WiFiServer server(80);
+float anguloGiro = 0.0;
+const float alpha = 0.98; // ponderación giroscopio
+
+  //Funcion PID
+
+float computePID(float input) {
+    unsigned long now = millis();
+    float dt = (now - lastTime) / 1000.0;  // segundos
+    lastTime = now;
+
+    //Formula general para PID
+
+    error = setpoint - input;
+    integral += error * dt;
+    float derivative = (error - prevError) / dt;
+    float output = Kp * error + Ki * integral + Kd * derivative;
+    prevError = error;
+    return output;
+}
+
 
 void setup() {
  
-   //Encender monitor serial para comunicaciones
+    //Encender monitor serial para comunicaciones
 
   Serial.begin(115200);
-  Wire.begin(21, 22);   // SDA = 21, SCL = 22
+
+    //Comunicacion I2C para el giroscopio
+
+  Wire.begin(21, 22);   // SDA = 21, SCL = 22 (Pines Giroscopio)
 
     //Conectar servos a sus pines
 
@@ -63,6 +87,11 @@ void setup() {
 
   Serial.println("\nWiFi conectado");
   server.begin();
+
+    //Empieza timer para el PID
+
+  lastTime = millis();
+
 }
 
 
@@ -74,40 +103,52 @@ void loop() {
 
     // Convertir giroscopio a grados/s
 
-  float AnguloAvion = gx / 131.0;  // ajuste al 131 según sensibilidad del sensor y 
+  float anguloAvion = gx / 131.0;  // ajuste al 131 según sensibilidad del sensor y 
                                 // al eje de rotacion segun como se ponga el sensor
+
+  // Ángulo estimado usando filtro complementario para mejorar estabilidad
+
+    float rollAccel = atan2((float)ay, (float)az) * 180.0 / PI;
+    anguloGiro = alpha * (anguloGiro + anguloAvion * ((millis() - lastTime)/1000.0)) + (1.0 - alpha) * rollAccel;
 
    //PID para nivelar
 
-  float setpoint = 0;  // declara valor que queremos conseguir (horizontal)
-  error = setpoint - AnguloAvion;
-  integral += error * 0.01;
-  float derivative = (error - prevError) / 0.01;
-  float RESULTADO = Kp*error + Ki*integral + Kd*derivative;
-  prevError = error;
+  float pidOutput = computePID(anguloGiro);
 
     // Ajustar servos para nivelar
 
-  int PosAleronIzq = constrain(90 + RESULTADO, 0, 180);   // Sumamos y restamos por que queremos que giren en contra para
-  int PosAleronDer = constrain(90 - RESULTADO, 0, 180);   // girar el avion
+  int PosAleronIzq = constrain(90 + pidOutput, 0, 180);   // Sumamos y restamos por que queremos que giren en contra para
+  int PosAleronDer = constrain(90 - pidOutput, 0, 180);   // girar el avion
 
   AleronIzquierdo.write(PosAleronIzq);
   AleronDerecho.write(PosAleronDer);
 
-   // Telemetria por WIFI
-  WiFiClient client = server.available();
-  if (client) {
-    String response = "AX:" + String(ax) + " AY:" + String(ay) + " AZ:" + String(az)
-                      + " GX:" + String(gx) + " GY:" + String(gy) + " GZ:" + String(gz)
-                      + "\n";
-    client.println(response);
-    client.stop();
-  }
+      // Telemetría WiFi en JSON (multi-cliente no bloqueante)
 
-  // Imprimimos en serial para probar
-  Serial.print("Angulo del avion: "); Serial.print(AnguloAvion);
+  WiFiClient client = server.available();
+    while(client) {
+        StaticJsonDocument<256> doc;
+        doc["AX"] = ax;
+        doc["AY"] = ay;
+        doc["AZ"] = az;
+        doc["GX"] = gx;
+        doc["GY"] = gy;
+        doc["GZ"] = gz;
+        doc["AnguloGiro"] = anguloGiro;
+        doc["ServoLeft"] = PosAleronIzq;
+        doc["ServoRight"] = PosAleronDer;
+
+        String output;
+        serializeJson(doc, output);
+        client.println(output);
+
+        client = server.available(); // permitir siguiente cliente
+    }
+
+
+    // Imprimimos en serial para realizar pruebas
+  Serial.print("Angulo del avion: "); Serial.print(anguloGiro);
   Serial.print(" ServoL: "); Serial.print(PosAleronIzq);
   Serial.print(" ServoR: "); Serial.println(PosAleronDer);
 
-  delay(10); // delay necesario para funcionamiento del giroscopio
 }
