@@ -1,0 +1,50 @@
+# PlatformIO build system files
+.pio/
+.ccls-cache/
+.clangd/
+.pvs-studio/
+
+# VS Code settings (local only)
+.vscode/
+.history/
+*.code-workspace
+
+# OS-specific files
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# Backup / temp files
+*.bak
+*.swp
+*.swo
+*.tmp
+*.log
+
+# Python cache (PlatformIO uses Python internally)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Unit test output
+.test/
+coverage/
+
+# Libraries downloaded/installed locally
+.libdeps/
+
+# Optional: ignore your personal notes
+notes.txt
+todo.txt
+
